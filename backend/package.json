@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "dev": "node --watch server.mjs",
+    "build": "node --check server.mjs",
+    "start": "node server.mjs",
+    "typecheck": "node --check server.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
