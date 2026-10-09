@@ -40,7 +40,7 @@ Seasonal checks use Open-Meteo. Set your coordinates and season dates in Setting
 
 ## Deploy on Vercel
 
-Import this repository with **Root Directory `.` (repository root)** and production branch **main**. The committed `vercel.json` selects Vite, runs `npm ci` and `npm run build`, and publishes `frontend/dist`. Do not select `frontend` as the root: the `api` folder supplies the hosted services.
+Import this repository with **Root Directory `.` (repository root)** and production branch **main**. The committed `vercel.json` selects Vite, runs `npm ci` and `npm run build`, and publishes the root `dist` directory. Do not select `frontend` as the root: the `api` folder supplies the hosted services.
 
 Use Node.js 22 or 24. Seasonal notifications work through `/api/seasonal`. Optional photo analysis requires server-side `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in Vercel environment settings, followed by a redeploy. Without them, manual soil observations still work.
 
