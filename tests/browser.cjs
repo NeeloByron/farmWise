@@ -1,0 +1,55 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs/promises');
+const fixture={version:1,demo:false,profile:{name:'Demo Farmer',farm:'Demo farm',location:'Limpopo',latitude:-23,longitude:30,land:2,season:'Summer',seasonStart:'2026-10-10',seasonEnd:'2027-01-10',budget:1000},fields:[{id:'a',name:'Field A',area:.5,crop:'Maize',variety:'',planted:'2026-10-10',harvest:'',status:'Planned',seedRate:20,seedUnit:'kg/ha'}],stock:[{id:'fert',name:'Demo fertiliser',category:'Fertiliser',quantity:50,unit:'kg',reorder:10}],tasks:[],costs:[],equipment:[{id:'tractor',name:'Tractor',hours:245,nextHours:250,interval:250,dueDate:'',notes:''}],services:[],soil:[],seedTests:[],quotes:[],groups:[],outlooks:[],readAlerts:[]};
+(async()=>{
+ const server=spawn(process.execPath,['backend/server.mjs'],{env:{...process.env,PORT:'4013'},stdio:'inherit'});
+ let browser,page;
+ try {
+  for(let i=0;i<40;i++){try{if((await fetch('http://127.0.0.1:4013/api/status')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
+  browser=await chromium.launch({headless:true});
+  page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('http://127.0.0.1:4013');
+  await page.evaluate(s=>localStorage.setItem('farmwise:v1',JSON.stringify(s)),fixture);
+  await page.reload();
+  const nav=async name=>page.getByRole('navigation',{name:'Main navigation',exact:true}).getByRole('link',{name,exact:true}).click();
+  const data=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('farmwise:v1')));
+  const save=()=>page.getByRole('dialog').getByRole('button',{name:'Save',exact:true}).click();
+  await nav('Planning');await page.getByRole('button',{name:'Add task',exact:true}).click();
+  await page.getByLabel('Task',{exact:true}).fill('Prepare soil');await page.getByLabel('Due date').fill('2026-10-09');await save();
+  await page.getByRole('button',{name:'Edit task Prepare soil'}).click();await page.getByLabel('Task',{exact:true}).fill('Prepare Field A');await save();
+  await page.getByRole('checkbox',{name:'Complete Prepare Field A'}).check();assert.equal((await data()).tasks[0].done,true);
+  await nav('Resources');await page.getByRole('button',{name:'Add requirement'}).click();
+  await page.getByLabel('Total quantity required').fill('100');await page.getByLabel('Estimated price per stock unit').fill('12');await page.getByLabel('Requirement source').fill('Demo adviser rate');await save();
+  await page.getByRole('button',{name:'Reserve stock',exact:true}).click();await page.getByLabel('Total quantity to reserve').fill('50');await save();
+  assert.equal((await data()).allocations[0].quantity,50);
+  await page.getByRole('button',{name:'Receive stock',exact:true}).click();await page.getByLabel('Quantity (kg)',{exact:true}).fill('50');await page.getByLabel('Total paid').fill('600');await save();
+  let s=await data();assert.equal(s.stock[0].quantity,100);assert.equal(s.costs.reduce((n,c)=>n+c.actual,0),600);
+  await page.getByRole('button',{name:'Record usage',exact:true}).click();await page.getByLabel('Quantity (kg)',{exact:true}).fill('100');await save();
+  assert.equal((await data()).stock[0].quantity,0);await page.reload();assert.equal((await data()).stock[0].quantity,0);
+  await nav('Financial Plan');await page.getByRole('button',{name:'Add expense',exact:true}).click();
+  await page.getByLabel('Item',{exact:true}).fill('Transport');await page.getByLabel('Actual spent').fill('200');await save();
+  await page.getByText('You have used 80% of your budget',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Edit Transport',exact:true}).click();await page.getByLabel('Actual spent').fill('500');await save();
+  await page.locator('.budget-warning').filter({hasText:'over budget'}).waitFor();
+  await page.getByRole('button',{name:'Edit Transport',exact:true}).click();await page.getByLabel('Actual spent').fill('0');await save();
+  assert.equal(await page.locator('.budget-warning').count(),0);
+  await nav('Equipment Care');await page.getByRole('button',{name:'Log maintenance',exact:true}).click();
+  await page.getByLabel('Hour reading').fill('250');await page.getByLabel('Service cost').fill('100');await page.getByLabel('Work completed').fill('Oil service');await save();
+  s=await data();assert.equal(s.equipment[0].nextHours,500);assert.equal(s.services.length,1);assert.equal(s.costs.filter(c=>c.serviceId).length,1);
+  await page.getByRole('button',{name:'Farm settings',exact:true}).first().click();
+  const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Download backup'}).click();const download=await downloadEvent;const backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));assert.equal(backup.movements.length,2);
+  await page.getByText('Restore a backup',{exact:true}).click();
+  await page.locator('input[type=file]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});await page.getByRole('button',{name:'Confirm',exact:true}).click();assert.equal((await data()).services.length,1);
+  await page.locator('input[type=file]').setInputFiles({name:'broken.json',mimeType:'application/json',buffer:Buffer.from('{}')});await page.getByText('This backup has missing or invalid farm records.',{exact:true}).waitFor();assert.equal((await data()).services.length,1);
+  await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Open farm menu'}).click();
+  await page.getByRole('navigation',{name:'Mobile navigation'}).getByRole('link',{name:/Financial Plan/}).click();
+  await page.getByRole('heading',{name:'Financial Plan',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/mobile-finance.png',fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});await nav('Resources');await page.screenshot({path:'test-results/desktop-resources.png',fullPage:true});
+  assert.deepEqual(errors,[]);console.log('Browser workflows passed: tasks, input plan, reservation, receipt, usage, budget warnings, maintenance, refresh, backups and mobile navigation.');
+ }catch(e){if(page){await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/failure.png',fullPage:true}).catch(()=>{});}throw e;}finally{if(browser)await browser.close();server.kill();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

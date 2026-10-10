@@ -1,13 +1,15 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { Droplets, Package, Map, SlidersHorizontal } from 'lucide-react';
-import { Card, Empty, Heading, Note, number, AddButton } from '../components/UI';
+import { Card, Empty, Heading, Note, number, AddButton, Button } from '../components/UI';
 import { fertiliserNeed, irrigationNeed } from '../domain.mjs';
 import type { FarmState, Stock } from '../types';
+import { ResourceWorkflow } from '../components/ResourceWorkflow';
 
-export function ResourcesPage({state,onAdd,tools}:{state:FarmState;onAdd:()=>void;tools:(s:Stock)=>ReactNode}) {
+export function ResourcesPage({state,onAdd,tools,save}:{state:FarmState;onAdd:()=>void;tools:(s:Stock)=>ReactNode;save:(s:FarmState)=>boolean}) {
   const [fieldId,setFieldId]=useState(state.fields[0]?.id||'');
   const [rate,setRate]=useState(''),[bag,setBag]=useState('50'),[stock,setStock]=useState('0');
   const [et0,setEt0]=useState(''),[kc,setKc]=useState(''),[rain,setRain]=useState('0'),[efficiency,setEfficiency]=useState('');
+  useEffect(()=>{const v=state.estimates?.[fieldId]||{};setRate(v.rate||'');setBag(v.bag||'50');setStock(v.stock||'0');setEt0(v.et0||'');setKc(v.kc||'');setRain(v.rain||'0');setEfficiency(v.efficiency||'');},[fieldId]);
   const field=state.fields.find(x=>x.id===fieldId);const area=field?.area||0;
   const allocated=state.fields.reduce((sum,f)=>sum+f.area,0);
   let fertiliser:ReturnType<typeof fertiliserNeed>|null=null,water:ReturnType<typeof irrigationNeed>|null=null,error='',waterError='';
@@ -26,10 +28,12 @@ export function ResourcesPage({state,onAdd,tools}:{state:FarmState;onAdd:()=>voi
         <details className="calculator-details"><summary><SlidersHorizontal size={15}/>Set field values</summary><div className="calculator-inputs">{numeric('Reference evapotranspiration',et0,setEt0,'mm/day')}{numeric('Crop coefficient',kc,setKc,'Kc')}{numeric('Effective rainfall',rain,setRain,'mm/day')}{numeric('Irrigation efficiency',efficiency,setEfficiency,'%')}{waterError&&<p role="alert" className="form-error">{waterError}</p>}<p className="caption">Use local field values. Check soil moisture before irrigating.</p></div></details>
       </Card>
     </div>
+    {field&&<Button secondary disabled={!!error||!!waterError} onClick={()=>save({...state,estimates:{...state.estimates,[fieldId]:{rate,bag,stock,et0,kc,rain,efficiency}}})}>Save field calculator values</Button>}
     {!state.fields.length&&<Note>Add a crop plan to calculate resources for a field.</Note>}
     <Card title="Resource stock" action={<span className="record-count">{state.stock.length} resources</span>}>
       {state.stock.length?<div className="stock-list">{state.stock.map(s=><div className="stock-row" key={s.id}><span className="icon-tile soft"><Package size={21}/></span><div className="stock-name"><strong>{s.name}</strong><small>{s.category}</small></div><div className="stock-quantity"><strong>{number(s.quantity)} <small>{s.unit}</small></strong><span className={'pill '+(s.quantity<=s.reorder?'amber':'')}>{s.quantity<=s.reorder?'Running low':'In stock'}</span></div>{tools(s)}</div>)}</div>:<Empty title="Keep your stock in view" body="Add fertiliser, seeds, feed, and other supplies. Update quantities as you use them."/>}
     </Card>
-    <p className="caption">Field estimates help plan quantities. Confirm application rates with your adviser and update stock after use.</p>
+    <ResourceWorkflow state={state} fieldId={fieldId} save={save}/>
+    <p className="caption">Confirm rates with your adviser. Receive and record usage below to keep quantities and costs connected.</p>
   </>;
 }

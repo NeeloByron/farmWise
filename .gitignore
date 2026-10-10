@@ -6,3 +6,4 @@ dist/
 *.log
 *.tsbuildinfo
 backend/data/
+test-results/

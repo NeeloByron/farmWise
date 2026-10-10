@@ -23,10 +23,22 @@ const schemas={
   outlooks:record({created:x=>text(x)&&!Number.isNaN(Date.parse(x)),from:date,to:date,days:positive,temperature:Number.isFinite,rainfall:amount,partial:bool,source:text,location:text}),
 };
 export function validateBackup(x){
+  if(x?.estimates!==undefined&&(!x.estimates||typeof x.estimates!=='object'||Array.isArray(x.estimates)||!Object.values(x.estimates).every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.values(v).every(text))))return false;
+  for(const key of ['allocations','inputPlans','movements'])if(x?.[key]!==undefined&&(!Array.isArray(x[key])||x[key].length>10000))return false;
+  if(!(x?.allocations||[]).every(a=>object(a,{fieldId:text,stockId:text,quantity:positive})))return false;
+  if(!(x?.inputPlans||[]).every(a=>object(a,{fieldId:text,stockId:text,required:amount,unitPrice:amount,source:text})))return false;
+  if(!(x?.movements||[]).every(record({stockId:text,fieldId:text,kind:oneOf('receive','use'),quantity:positive,cost:amount,date,notes:text})))return false;
   if(x?.seasonalAuto!==undefined&&!bool(x.seasonalAuto))return false;
   if(x?.seasonalCheck!==undefined&&!object(x.seasonalCheck,{key:text,at:amount}))return false;
   if(!object(x,{version:x=>x===1,demo:bool,profile:p=>object(p,{name:text,farm:text,location:text,latitude:n=>Number.isFinite(n)&&Math.abs(n)<=90,longitude:n=>Number.isFinite(n)&&Math.abs(n)<=180,land:positive,season:text,seasonStart:date,seasonEnd:date,budget:amount}),readAlerts:a=>Array.isArray(a)&&a.every(text)}))return false;
   if(x.profile.seasonEnd<=x.profile.seasonStart)return false;
   if(!Object.entries(schemas).every(([key,check])=>Array.isArray(x[key])&&x[key].length<=10000&&x[key].every(check)&&new Set(x[key].map(r=>r.id)).size===x[key].length))return false;
+  const allocations=x.allocations||[],plans=x.inputPlans||[],movements=x.movements||[];
+  for(const rows of [allocations,plans]) {
+    if(new Set(rows.map(a=>JSON.stringify([a.fieldId,a.stockId]))).size!==rows.length)return false;
+    if(rows.some(a=>!x.fields.some(f=>f.id===a.fieldId)||!x.stock.some(s=>s.id===a.stockId)))return false;
+  }
+  if(new Set(movements.map(m=>m.id)).size!==movements.length)return false;
+  if(x.stock.some(s=>allocations.filter(a=>a.stockId===s.id).reduce((n,a)=>n+a.quantity,0)>s.quantity+1e-8))return false;
   return x.fields.reduce((s,f)=>s+f.area,0)<=x.profile.land+1e-8;
 }

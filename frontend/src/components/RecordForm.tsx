@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { Input, Modal, Note, Select, Textarea } from './UI';
 import { today, uid } from '../store';
-import type { FarmState, Field, Equipment, Cost, Stock, Quote, Group } from '../types';
+import type { FarmState, Field, Equipment, Cost, Stock, Quote, Group, Task } from '../types';
 export type FormKind='field'|'task'|'cost'|'stock'|'equipment'|'service'|'seed'|'quote'|'group';
-export type EditRecord = Field|Equipment|Cost|Stock|Quote|Group;
+export type EditRecord = Field|Equipment|Cost|Stock|Quote|Group|Task;
 export function RecordForm({kind,state,record,onSave,onClose}:{kind:FormKind;state:FarmState;record?:EditRecord;onSave:(value:FarmState)=>boolean;onClose:()=>void}) {
   const [error,setError]=useState('');
+  const [operationId]=useState(uid);
+  const task=record as Task|undefined;
   const fieldOptions=[{value:'',label:'Whole farm'},...state.fields.map(x=>({value:x.id,label:`${x.name} · ${x.crop}`}))];
   const fields=fieldOptions.slice(1);
   const field=record as Field|undefined, cost=record as Cost|undefined, stock=record as Stock|undefined, equipment=record as Equipment|undefined, quote=record as Quote|undefined, group=record as Group|undefined;
@@ -17,18 +19,27 @@ export function RecordForm({kind,state,record,onSave,onClose}:{kind:FormKind;sta
     const next=structuredClone(state);
     const replace=(list:any[],item:any)=>{const i=list.findIndex(x=>x.id===item.id);if(i<0)list.push(item);else list[i]=item;};
     try {
-      const id=(kind==="service"?undefined:record?.id)||uid();
+      if(['field','task','cost','stock','equipment'].includes(kind)&&!s('name'))throw new Error('Enter a name, not just spaces.');
+      const id=(kind==="service"?undefined:record?.id)||operationId;
       if(kind==='field') {
         const area=n('area');const used=state.fields.filter(x=>x.id!==id).reduce((v,x)=>v+x.area,0);
         if(area<=0||used+area>state.profile.land)throw new Error(`Your fields cannot exceed ${state.profile.land} ha. Update farm size in Settings first.`);
         if(s('harvest')&&s('harvest')<s('planted'))throw new Error('Harvest date must be after planting.');
         replace(next.fields,{id,name:s('name'),area,crop:s('crop'),variety:s('variety'),planted:s('planted'),harvest:s('harvest'),status:s('status'),seedRate:n('seedRate'),seedUnit:s('seedUnit')});
       }
-      if(kind==='task'){if(!fields.length)throw new Error('Add a field first.');next.tasks.push({id,fieldId:s('fieldId'),name:s('name'),date:s('date'),done:false});}
-      if(kind==='cost')replace(next.costs,{id,name:s('name'),category:s('category'),fieldId:s('fieldId'),planned:n('planned'),actual:n('actual'),date:s('date')});
-      if(kind==='stock')replace(next.stock,{id,name:s('name'),category:s('category'),quantity:n('quantity'),unit:s('unit'),reorder:n('reorder')});
+      if(kind==='task'){if(!fields.length)throw new Error('Add a field first.');replace(next.tasks,{id,fieldId:s('fieldId'),name:s('name'),date:s('date'),done:task?.done||false});}
+      if(kind==='cost') {
+        replace(next.costs,{...cost,id,name:s('name'),category:s('category'),fieldId:s('fieldId'),planned:n('planned'),actual:n('actual'),date:s('date')});
+        if(cost?.serviceId)next.services=next.services.map(x=>x.id===cost.serviceId?{...x,cost:n('actual')}:x);
+        if(cost?.movementId)next.movements=next.movements?.map(x=>x.id===cost.movementId?{...x,cost:n('actual')}:x);
+      }
+      if(kind==='stock') {
+        if(stock&&n('quantity')!==stock.quantity)throw new Error('Use Receive stock or Record usage to change quantities and keep the history accurate.');
+        if(stock&&s('unit')!==stock.unit&&((state.movements||[]).some(x=>x.stockId===id)||(state.inputPlans||[]).some(x=>x.stockId===id)||(state.allocations||[]).some(x=>x.stockId===id)))throw new Error('This resource already has records. Add a separate resource for a different unit.');
+        replace(next.stock,{id,name:s('name'),category:s('category'),quantity:n('quantity'),unit:s('unit'),reorder:n('reorder')});
+      }
       if(kind==='equipment') {
-        const hours=n('hours'),nextHours=s('nextHours')?n('nextHours'):null;
+        const hours=n('hours');if(equipment&&hours<equipment.hours)throw new Error('Operating hours cannot decrease.');const nextHours=s('nextHours')?n('nextHours'):null;
         if(nextHours===null&&!s('dueDate'))throw new Error('Set a service date or operating-hour threshold.');
         replace(next.equipment,{id,name:s('name'),hours,nextHours,interval:n('interval'),dueDate:s('dueDate'),notes:s('notes')});
       }
@@ -37,8 +48,9 @@ export function RecordForm({kind,state,record,onSave,onClose}:{kind:FormKind;sta
         const hours=n('hours');if(hours<item.hours)throw new Error('The hour reading cannot decrease.');
         if(!s('dueDate')&&item.interval<=0)throw new Error('Enter the next inspection date for date-based maintenance.');
         item.hours=hours;item.nextHours=item.interval>0?hours+item.interval:null;item.dueDate=s('dueDate');
+        if(next.services.some(x=>x.id===id))return;
         next.services.unshift({id,equipmentId:item.id,name:item.name,date:s('date'),hours,cost:n('cost'),notes:s('notes')});
-        if(n('cost')>0)next.costs.push({id:uid(),name:`Service: ${item.name}`,category:'Equipment',fieldId:'',planned:0,actual:n('cost'),date:s('date')});
+        next.costs.push({id:`service:${id}`,serviceId:id,name:`Service: ${item.name}`,category:'Equipment',fieldId:'',planned:0,actual:n('cost'),date:s('date')});
       }
       if(kind==='seed') {
         const tested=n('tested'),sprouted=n('sprouted');if(!fields.length||tested<1||sprouted>tested||!Number.isInteger(tested)||!Number.isInteger(sprouted))throw new Error('Select a field and enter whole seed counts. Sprouts cannot exceed seeds tested.');
@@ -51,7 +63,7 @@ export function RecordForm({kind,state,record,onSave,onClose}:{kind:FormKind;sta
   }
   return <Modal title={`${record&&kind!=='service'?'Edit':'Add'} ${names[kind]}`} onClose={onClose} onSubmit={submit}>{error&&<p role="alert" className="form-error">{error}</p>}
     {kind==='field'&&<><div className="form-grid"><Input label="Field name" name="name" value={field?.name}/><Input label="Area (ha)" name="area" type="number" min="0.01" step="0.01" value={field?.area}/><Input label="Crop" name="crop" value={field?.crop}/><Input label="Variety" name="variety" required={false} value={field?.variety}/><Input label="Planting date" name="planted" type="date" value={field?.planted}/><Input label="Expected harvest" name="harvest" type="date" value={field?.harvest} required={false}/><Select label="Status" name="status" value={field?.status} options={['Planned','Growing','Harvested'].map(x=>({value:x,label:x}))}/><Input label="Seed rate per hectare" name="seedRate" type="number" min="0" step="any" value={field?.seedRate||0}/><Select label="Seed rate unit" name="seedUnit" value={field?.seedUnit} options={['kg/ha','seeds/ha'].map(x=>({value:x,label:x}))}/></div><Note>Enter a rate from your seed supplier or adviser. FarmWise calculates quantity; it does not prescribe a seed rate.</Note></>}
-    {kind==='task'&&<><Input label="Task" name="name" placeholder="e.g. Check emergence"/><Select label="Field" name="fieldId" options={fields}/><Input label="Due date" name="date" type="date" value={today()}/></>}
+    {kind==='task'&&<><Input label="Task" name="name" value={task?.name} placeholder="e.g. Check emergence"/><Select label="Field" name="fieldId" value={task?.fieldId} options={fields}/><Input label="Due date" name="date" type="date" value={task?.date||today()}/></>}
     {kind==='cost'&&<><Input label="Item" name="name" value={cost?.name}/><div className="form-grid"><Select label="Category" name="category" value={cost?.category} options={['Seeds','Fertiliser','Water','Feed','Equipment','Labour','Other'].map(x=>({value:x,label:x}))}/><Select label="Field" name="fieldId" value={cost?.fieldId} options={fieldOptions}/><Input label="Planned cost (R)" name="planned" type="number" min="0" step="0.01" value={cost?.planned||0}/><Input label="Actual spent (R)" name="actual" type="number" min="0" step="0.01" value={cost?.actual||0}/><Input label="Date" name="date" type="date" value={cost?.date||today()}/></div></>}
     {kind==='stock'&&<><Input label="Resource / formulation" name="name" value={stock?.name}/><div className="form-grid"><Select label="Category" name="category" value={stock?.category} options={['Seeds','Fertiliser','Feed','Other'].map(x=>({value:x,label:x}))}/><Select label="Unit" name="unit" value={stock?.unit} options={['kg','L','units'].map(x=>({value:x,label:x}))}/><Input label="Quantity in stock" name="quantity" type="number" min="0" step="any" value={stock?.quantity||0}/><Input label="Low-stock threshold" name="reorder" type="number" min="0" step="any" value={stock?.reorder||0}/></div></>}
     {kind==='equipment'&&<><Input label="Equipment name" name="name" value={equipment?.name}/><div className="form-grid"><Input label="Current operating hours" name="hours" type="number" min="0" step="any" value={equipment?.hours||0}/><Input label="Next service at (hours)" name="nextHours" type="number" min="0" step="any" required={false} value={equipment?.nextHours??''}/><Input label="Service interval (hours)" name="interval" type="number" min="0" step="any" value={equipment?.interval||0}/><Input label="Next inspection date" name="dueDate" type="date" required={false} value={equipment?.dueDate}/></div><Textarea label="Service guidance / notes" name="notes" value={equipment?.notes}/><Note>Use the service interval and checks from the equipment manual.</Note></>}

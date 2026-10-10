@@ -6,6 +6,7 @@ import { RecordForm, type EditRecord, type FormKind } from './components/RecordF
 import { FarmPhoto } from './components/FarmPhoto';
 import { today, uid, useFarm } from './store';
 import { budgetTotals, serviceState } from './domain.mjs';
+import { budgetAlerts, stockBalance, planBalance, syncInputCosts } from './workflows.mjs';
 import type { FarmState, Page } from './types';
 import { SoilPage } from './pages/SoilPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -49,27 +50,32 @@ export default function App() {
   useEffect(()=>{
     if(capabilities.online&&state.seasonalAuto&&!weatherRequest.current&&(state.seasonalCheck?.key!==seasonKey||Date.now()-(state.seasonalCheck?.at||0)>86400000))void refreshOutlook();
   },[capabilities.online,state.seasonalAuto,seasonKey,clockTick]);
-  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),3500);return()=>clearTimeout(timer);},[toast]);
+  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),8000);return()=>clearTimeout(timer);},[toast]);
   useEffect(()=>{const query=matchMedia('(min-width: 1024px)');const close=()=>{if(query.matches)setMenu(false);};query.addEventListener('change',close);return()=>query.removeEventListener('change',close);},[]);
 
   function navigate(next:Page){location.hash=next;setPage(next);setMenu(false);window.scrollTo({top:0});}
-  function save(next:FarmState){const ok=update(next);if(ok)setToast('Changes saved');return ok;}
+  function save(next:FarmState){const synced=syncInputCosts(next);const ok=update(synced);if(ok){const fresh=budgetAlerts(synced).filter(a=>!budgetAlerts(state).some(x=>x.id===a.id));setToast(fresh.length?fresh.map(a=>a.title+'. '+a.body).join(' '):'Changes saved');}return ok;}
   const open=(kind:FormKind,record?:EditRecord)=>setForm({kind,record});
   function remove(collection:'fields'|'costs'|'stock'|'equipment',id:string) {
     setConfirm({text:'Remove this record? Existing expenses, soil observations, and maintenance history will be kept.',action:()=>{
       const next=structuredClone(state);
       (next[collection] as {id:string}[])=(next[collection] as {id:string}[]).filter(x=>x.id!==id);
-      if(collection==='fields')next.tasks=next.tasks.filter(x=>x.fieldId!==id);
+      if(collection==='fields') {next.tasks=next.tasks.filter(x=>x.fieldId!==id);next.allocations=next.allocations?.filter(x=>x.fieldId!==id);next.inputPlans=next.inputPlans?.filter(x=>x.fieldId!==id);}
+      if(collection==='stock'){next.allocations=next.allocations?.filter(x=>x.stockId!==id);next.inputPlans=next.inputPlans?.filter(x=>x.stockId!==id);}
+      if(collection==='costs'){const cost=state.costs.find(x=>x.id===id);next.services=next.services.map(x=>x.id===cost?.serviceId?{...x,cost:0}:x);next.movements=next.movements?.map(x=>x.id===cost?.movementId?{...x,cost:0}:x);}
       save(next);
     }});
   }
   const totals=budgetTotals(state.profile.budget,state.costs);
   const upcoming=state.tasks.filter(t=>!t.done).sort((a,b)=>a.date.localeCompare(b.date));
   const area=state.fields.reduce((s,f)=>s+f.area,0);
+  const spendingAlerts=budgetAlerts(state);
   const farmAlerts=[
+    ...spendingAlerts.map(a=>({...a,page:'finance' as Page,kind:'Budget',icon:Wallet})),
+    ...(state.inputPlans||[]).filter(p=>planBalance(state,p).shortage>0).map(p=>({id:`shortage:${p.fieldId}:${p.stockId}:${planBalance(state,p).shortage}`,title:`${state.fields.find(f=>f.id===p.fieldId)?.name}: supplies needed`,body:`${number(planBalance(state,p).shortage)} ${state.stock.find(s=>s.id===p.stockId)?.unit} of ${state.stock.find(s=>s.id===p.stockId)?.name} still needed.`,page:'resources' as Page,kind:'Shortage',icon:Package})),
     ...upcoming.filter(t=>t.date<=new Date(Date.now()+7*86400000).toLocaleDateString('en-CA',{timeZone:'Africa/Johannesburg'})).map(t=>({id:`task:${t.id}:${t.date}`,title:t.name,body:`${state.fields.find(f=>f.id===t.fieldId)?.name||'Field'} · ${dateLabel(t.date)}`,page:'planning' as Page,kind:'Planting',icon:CalendarDays})),
     ...state.equipment.filter(e=>serviceState(e,today()).status!=='Up to date').map(e=>({id:`service:${e.id}:${e.nextHours}:${e.dueDate}`,title:`${e.name} · ${serviceState(e,today()).status}`,body:'Review your equipment service schedule.',page:'equipment' as Page,kind:'Maintenance',icon:Wrench})),
-    ...state.stock.filter(s=>s.quantity<=s.reorder).map(s=>({id:`stock:${s.id}:${s.quantity}`,title:`${s.name} is running low`,body:`${number(s.quantity)} ${s.unit} in stock`,page:'resources' as Page,kind:'Resources',icon:Package})),
+    ...state.stock.filter(s=>stockBalance(state,s.id).available<=s.reorder).map(s=>({id:`stock:${s.id}:${s.quantity}`,title:`${s.name} is running low`,body:`${number(stockBalance(state,s.id).available)} ${s.unit} unreserved`,page:'resources' as Page,kind:'Resources',icon:Package})),
     ...state.outlooks.map(o=>({id:o.id,title:'Your seasonal outlook is ready',body:`${dateLabel(o.from)} – ${dateLabel(o.to)} · ${o.location}`,page:'alerts' as Page,kind:'Seasonal',icon:CloudSun})),
   ];
   const unread=farmAlerts.filter(a=>!state.readAlerts.includes(a.id)).length;
@@ -109,6 +115,7 @@ export default function App() {
     <main id="main-content" tabIndex={-1} className="main-content">
       {state.demo&&<div className="demo-banner"><span><span className="sample-dot"/>Sample farm <span className="sample-explanation">· Explore the screens with example data</span></span><button onClick={()=>navigate('settings')}>Set up your farm <ArrowRight size={13}/></button></div>}
       {problem&&<p role="alert" className="form-error">{problem}</p>}
+      {(page==='home'||page==='finance')&&spendingAlerts.map(a=><div className="budget-warning" role="alert" key={a.id}><Wallet size={22}/><div><strong>{a.title}</strong><p>{a.body}</p></div>{page==='home'&&<Button secondary onClick={()=>navigate('finance')}>Review budget</Button>}</div>)}
 
       {page==='home'&&<>
         <Heading title={`${greeting}, ${state.profile.name}.`} description="Here’s what’s happening on your farm." action={<span className="location-label"><MapPin size={15}/>{state.profile.location}</span>}/>
@@ -143,17 +150,17 @@ export default function App() {
           {state.fields.map(f=><Card className="crop-card" key={f.id}><div className="crop-photo"><FarmPhoto/><span className="pill photo-pill">{f.status}</span></div><div className="crop-card-body"><div className="section-heading"><div><span className="eyebrow">SEASONAL CROP PLAN</span><h2>{f.crop}</h2><p className="muted small">{f.name} · {number(f.area)} ha</p></div>{rowTools('field',f,'fields')}</div><dl className="details"><div><dt>Variety</dt><dd>{f.variety||'Not set'}</dd></div><div><dt>Planting</dt><dd>{dateLabel(f.planted)}</dd></div><div><dt>Expected harvest</dt><dd>{dateLabel(f.harvest)}</dd></div><div><dt>Seed quantity</dt><dd>{number(f.area*f.seedRate)} {f.seedUnit==='kg/ha'?'kg':'seeds'}</dd></div></dl><p className="caption">Calculated from your entered seed rate.</p></div></Card>)}
           {!state.fields.length&&<Card><Empty title="Plan your first field" body="Add a crop, field area, and planting date." action={<Button onClick={()=>open('field')}>Add crop plan</Button>}/></Card>}
         </div><Card title="Planting schedule" action={<Button variant="ghost" size="sm" disabled={!state.fields.length} onClick={()=>open('task')}><Plus size={16}/>Add task</Button>}>
-          {state.tasks.length?state.tasks.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(t=><div className={'schedule-row '+(t.done?'done':'')} key={t.id}><label className="task-check"><input type="checkbox" checked={t.done} aria-label={`Complete ${t.name}`} onChange={()=>save({...state,tasks:state.tasks.map(x=>x.id===t.id?{...x,done:!x.done}:x)})}/><span><Check size={13}/></span></label><div><span className={'schedule-date '+(t.date<today()&&!t.done?'overdue':'')}>{dateLabel(t.date)}</span><strong>{t.name}</strong><small>{state.fields.find(f=>f.id===t.fieldId)?.name}</small></div><Button variant="ghost" size="icon-sm" aria-label={`Delete task ${t.name}`} onClick={()=>setConfirm({text:'Remove this planting task?',action:()=>{save({...state,tasks:state.tasks.filter(x=>x.id!==t.id)});}})}><Trash2 size={14}/></Button></div>):<Empty title="Give your season a schedule" body="Add tasks for preparing your soil, planting, and crop checks."/>}
+          {state.tasks.length?state.tasks.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(t=><div className={'schedule-row '+(t.done?'done':'')} key={t.id}><label className="task-check"><input type="checkbox" checked={t.done} aria-label={`Complete ${t.name}`} onChange={()=>save({...state,tasks:state.tasks.map(x=>x.id===t.id?{...x,done:!x.done}:x)})}/><span><Check size={13}/></span></label><div><span className={'schedule-date '+(t.date<today()&&!t.done?'overdue':'')}>{dateLabel(t.date)}</span><strong>{t.name}</strong><small>{state.fields.find(f=>f.id===t.fieldId)?.name}</small></div><Button variant="ghost" size="icon-sm" aria-label={`Edit task ${t.name}`} onClick={()=>open('task',t)}><Pencil size={14}/></Button><Button variant="ghost" size="icon-sm" aria-label={`Delete task ${t.name}`} onClick={()=>setConfirm({text:'Remove this planting task?',action:()=>{save({...state,tasks:state.tasks.filter(x=>x.id!==t.id)});}})}><Trash2 size={14}/></Button></div>):<Empty title="Give your season a schedule" body="Add tasks for preparing your soil, planting, and crop checks."/>}
         </Card></div>
       </>}
 
       {page==='finance'&&<>
         <Heading title="Financial Plan" description="Plan your spending and keep track of farm expenses." action={<AddButton onClick={()=>open('cost')}>Add expense</AddButton>}/>
         <Card title={`${state.profile.season} budget`} action={<LinkButton onClick={()=>navigate('settings')}>Edit budget</LinkButton>} className="finance-summary"><div className="finance-values"><div><span>Season budget</span><strong>{money(state.profile.budget)}</strong></div><div><span>Planned costs</span><strong>{money(totals.planned)}</strong></div><div><span>Actually spent</span><strong>{money(totals.spent)}</strong></div><div><span>Available</span><strong className={totals.remaining<0?'overdue':'olive'}>{money(totals.remaining)}</strong></div></div><progress aria-label="Budget spent" max={Math.max(state.profile.budget,1)} value={Math.min(totals.spent,state.profile.budget)}/><div className="budget-meter"><span>{state.profile.budget?Math.round(totals.spent/state.profile.budget*100):0}% of budget spent</span><span>{totals.unallocated<0?`${money(-totals.unallocated)} over planned budget`:`${money(totals.unallocated)} still to allocate`}</span></div></Card>
-        <div className="two-columns finance-grid"><Card title="Planned costs">{state.costs.length?state.costs.map(c=>{const Icon=c.category==='Water'?Droplets:c.category==='Seeds'?Sprout:c.category==='Equipment'?Tractor:Package;return <div className="cost-row" key={c.id}><span className="icon-tile soft"><Icon size={20}/></span><div><strong>{c.name}</strong><small>{c.category} · {state.fields.find(f=>f.id===c.fieldId)?.name||(c.fieldId?'Archived field':'Whole farm')}</small></div><span className="cost-value">{money(c.planned)}<small>planned</small></span>{rowTools('cost',c,'costs')}</div>;}):<Empty title="Start with your expected costs" body="Add seeds, fertiliser, water, and other farm expenses."/>}</Card><Card title="Recent expenses">{state.costs.filter(c=>c.actual>0).sort((a,b)=>b.date.localeCompare(a.date)).map(c=><div className="expense-row" key={c.id}><span className="expense-mark"><Wallet size={17}/></span><div><strong>{c.name}</strong><small>{dateLabel(c.date)}</small></div><strong>{money(c.actual)}</strong></div>)}{!state.costs.some(c=>c.actual>0)&&<Empty title="No expenses recorded" body="Update actual spending as you purchase your inputs."/>}<div className="expense-total"><span>Total spent</span><strong>{money(totals.spent)}</strong></div></Card></div>
+        <div className="two-columns finance-grid"><Card title="Planned costs">{state.costs.length?state.costs.map(c=>{const Icon=c.category==='Water'?Droplets:c.category==='Seeds'?Sprout:c.category==='Equipment'?Tractor:Package;return <div className="cost-row" key={c.id}><span className="icon-tile soft"><Icon size={20}/></span><div><strong>{c.name}</strong><small>{c.category} · {state.fields.find(f=>f.id===c.fieldId)?.name||(c.fieldId?'Archived field':'Whole farm')}</small></div><span className="cost-value">{money(c.planned)}<small>planned</small></span>{c.inputPlan?<Button secondary size="sm" onClick={()=>navigate('resources')}>Edit requirement</Button>:rowTools('cost',c,'costs')}</div>;}):<Empty title="Start with your expected costs" body="Add seeds, fertiliser, water, and other farm expenses."/>}</Card><Card title="Recent expenses">{state.costs.filter(c=>c.actual>0).sort((a,b)=>b.date.localeCompare(a.date)).map(c=><div className="expense-row" key={c.id}><span className="expense-mark"><Wallet size={17}/></span><div><strong>{c.name}</strong><small>{dateLabel(c.date)}</small></div><strong>{money(c.actual)}</strong></div>)}{!state.costs.some(c=>c.actual>0)&&<Empty title="No expenses recorded" body="Update actual spending as you purchase your inputs."/>}<div className="expense-total"><span>Total spent</span><strong>{money(totals.spent)}</strong></div></Card></div>
       </>}
 
-      {page==='resources'&&<ResourcesPage state={state} onAdd={()=>open('stock')} tools={s=>rowTools('stock',s,'stock')}/>}
+      {page==='resources'&&<ResourcesPage state={state} save={save} onAdd={()=>open('stock')} tools={s=>rowTools('stock',s,'stock')}/>}
       {page==='soil'&&<SoilPage state={state} save={save} aiEnabled={capabilities.soilAI}/>}
 
       {page==='equipment'&&<>

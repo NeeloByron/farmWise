@@ -2,6 +2,16 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+.budget-warning { display:flex; align-items:center; gap:16px; padding:18px; margin-bottom:20px; border:1px solid #c8986d; background:#fcf2e8; border-radius:12px; color:#713a20; }
+.budget-warning p { margin:4px 0 0; font-size:14px; }
+.budget-warning > div { flex:1; }
+.workflow-plan { padding:18px 0; border-bottom:1px solid #e5e7df; }
+.workflow-plan p { font-size:14px; margin:10px 0; }
+.workflow-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.task-check > span { pointer-events:none; }
+.toast { width:max-content; max-width:min(600px,calc(100vw - 32px)); }
+@media(max-width:700px) { .budget-warning { align-items:flex-start; flex-wrap:wrap; } .budget-warning > div { min-width:200px; } }
+
 :root {
   font-family: 'Inter Variable', Inter, sans-serif;
   color: #252c25;

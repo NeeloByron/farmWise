@@ -19,7 +19,7 @@ export function makeHandler({ fetcher = fetch, env = process.env, hosted = false
       if (url.pathname === '/api/status' && req.method === 'GET') return json(200,{ soilAI:ai, seasonal:true, mode:hosted?'hosted-pilot':'local-pilot' });
       if (url.pathname.startsWith('/api/')) {
         if (req.method !== 'POST') throw fail(405,'Use POST for this request.');
-        const allowedOrigin = hosted ? req.headers.origin === `https://${req.headers.host}` : /^http:\/\/(localhost|127\.0\.0\.1):(5173|4001)$/.test(req.headers.origin);
+        const allowedOrigin = hosted ? req.headers.origin === `https://${req.headers.host}` : req.headers.origin === `http://${req.headers.host}` || /^http:\/\/(localhost|127\.0\.0\.1):5173$/.test(req.headers.origin);
         if (req.headers.origin && !allowedOrigin) throw fail(403,'Origin not allowed.');
         if (req.headers['x-farmwise-client'] !== 'web' || !req.headers['content-type']?.startsWith('application/json')) throw fail(403,'A FarmWise JSON request is required.');
         const key = (hosted ? req.headers['x-forwarded-for'] : req.socket?.remoteAddress) + url.pathname, now = Date.now();
