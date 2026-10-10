@@ -8,6 +8,7 @@
 .workflow-plan { padding:18px 0; border-bottom:1px solid #e5e7df; }
 .workflow-plan p { font-size:14px; margin:10px 0; }
 .workflow-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.task-check > span { pointer-events:none; }
 .toast { width:max-content; max-width:min(600px,calc(100vw - 32px)); }
 @media(max-width:700px) { .budget-warning { align-items:flex-start; flex-wrap:wrap; } .budget-warning > div { min-width:200px; } }
 

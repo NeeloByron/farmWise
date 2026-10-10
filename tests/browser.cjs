@@ -5,11 +5,11 @@ const fs=require('node:fs/promises');
 const fixture={version:1,demo:false,profile:{name:'Demo Farmer',farm:'Demo farm',location:'Limpopo',latitude:-23,longitude:30,land:2,season:'Summer',seasonStart:'2026-10-10',seasonEnd:'2027-01-10',budget:1000},fields:[{id:'a',name:'Field A',area:.5,crop:'Maize',variety:'',planted:'2026-10-10',harvest:'',status:'Planned',seedRate:20,seedUnit:'kg/ha'}],stock:[{id:'fert',name:'Demo fertiliser',category:'Fertiliser',quantity:50,unit:'kg',reorder:10}],tasks:[],costs:[],equipment:[{id:'tractor',name:'Tractor',hours:245,nextHours:250,interval:250,dueDate:'',notes:''}],services:[],soil:[],seedTests:[],quotes:[],groups:[],outlooks:[],readAlerts:[]};
 (async()=>{
  const server=spawn(process.execPath,['backend/server.mjs'],{env:{...process.env,PORT:'4013'},stdio:'inherit'});
- let browser;
+ let browser,page;
  try {
   for(let i=0;i<40;i++){try{if((await fetch('http://127.0.0.1:4013/api/status')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
   browser=await chromium.launch({headless:true});
-  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];
+  page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://127.0.0.1:4013');
   await page.evaluate(s=>localStorage.setItem('farmwise:v1',JSON.stringify(s)),fixture);
@@ -51,5 +51,5 @@ const fixture={version:1,demo:false,profile:{name:'Demo Farmer',farm:'Demo farm'
   await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/mobile-finance.png',fullPage:true});
   await page.setViewportSize({width:1440,height:1000});await nav('Resources');await page.screenshot({path:'test-results/desktop-resources.png',fullPage:true});
   assert.deepEqual(errors,[]);console.log('Browser workflows passed: tasks, input plan, reservation, receipt, usage, budget warnings, maintenance, refresh, backups and mobile navigation.');
- }finally{if(browser)await browser.close();server.kill();}
+ }catch(e){if(page){await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/failure.png',fullPage:true}).catch(()=>{});}throw e;}finally{if(browser)await browser.close();server.kill();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
