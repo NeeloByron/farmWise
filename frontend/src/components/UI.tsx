@@ -9,7 +9,7 @@ export const money = (n:number) => new Intl.NumberFormat('en-ZA',{style:'currenc
 export const number = (n:number) => new Intl.NumberFormat('en-ZA',{maximumFractionDigits:1}).format(n);
 export const dateLabel = (s:string) => s ? new Date(s+'T12:00:00').toLocaleDateString('en-ZA',{day:'numeric',month:'short',year:'numeric'}) : 'Not set';
 export function Button({secondary=false,...props}:ComponentProps<typeof PrimitiveButton>&{secondary?:boolean}) {
-  return <PrimitiveButton variant={secondary?'outline':'default'} {...props}/>;
+  return <PrimitiveButton type="button" variant={secondary?'outline':'default'} {...props}/>;
 }
 export function AddButton({children,onClick}:{children:ReactNode;onClick:()=>void}) {return <Button onClick={onClick}><Plus size={17}/>{children}</Button>;}
 export function Heading({eyebrow,title,description,action}:{eyebrow?:string;title:string;description:string;action?:ReactNode}) {

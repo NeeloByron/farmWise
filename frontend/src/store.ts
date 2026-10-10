@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import type { FarmState } from './types';
 import {validateBackup} from './backup.mjs';
+import {syncInputCosts} from './workflows.mjs';
 export const today = () => new Date().toLocaleDateString('en-CA', {timeZone:'Africa/Johannesburg'});
 export const uid = () => crypto.randomUUID();
 function day(offset:number) { const d = new Date(); d.setDate(d.getDate()+offset); return d.toLocaleDateString('en-CA',{timeZone:'Africa/Johannesburg'}); }
@@ -19,7 +20,8 @@ export function useFarm() {
   const [state,setState]=useState<FarmState>(()=> {try { const saved=localStorage.getItem(KEY); if(saved) {const data=JSON.parse(saved); if(validateBackup(data)) return data;} } catch { /* fall back to example data */ } return initialState();});
   const current=useRef(state);
   function update(next:FarmState | ((s:FarmState)=>FarmState)) {
-    const value=typeof next==='function'?next(current.current):next;
+    const value=syncInputCosts(typeof next==='function'?next(current.current):next);
+    if(!validateBackup(value)){setProblem('Some records are invalid. Check required fields, quantities and dates. No changes were saved.');return false;}
     try {localStorage.setItem(KEY,JSON.stringify(value));current.current=value;setState(value);setProblem('');return true;} catch {setProblem('Your browser storage is full or unavailable. Export a backup and remove large photos before saving again.');return false;}
   }
   return {state,update,problem};
